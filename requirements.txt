@@ -1,0 +1,6 @@
+pymysql
+python-dotenv
+werkzeug
+fastapi 
+uvicorn 
+requests
