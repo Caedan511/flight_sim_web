@@ -5,7 +5,7 @@
 During local development, run the backend on the host machine:
 
 ```bash
-conda run -n flight_web python -m uvicorn backend.api_server:app --host 0.0.0.0 --port 8000
+conda run -n flight_web python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 
 Frontend requests should use:
@@ -33,18 +33,43 @@ Request header:
 Content-Type: application/json
 ```
 
-Current API responses usually return HTTP 200 and include:
+New auth and admin user APIs return:
 
 ```json
 {
   "success": true,
-  "message": "Operation message"
+  "message": "Operation message",
+  "data": {}
 }
 ```
 
-Login sessions or API tokens are not implemented yet. Admin-only pages should be treated as frontend-only guarded for now, based on the `role` returned by login. Backend permission enforcement should be added later.
+Errors use the same JSON shape with an appropriate HTTP status code.
+
+Authenticated requests should include:
+
+```http
+Authorization: Bearer <token>
+```
+
+Model version APIs have not been moved to the authenticated route structure yet. They will be updated separately.
 
 ## User Roles and Status
+
+User objects include both:
+
+```text
+id: internal database primary key
+uid: fixed-width display/API identifier, such as U000001
+```
+
+For an existing database, run these migrations before deploying this code:
+
+```text
+docs/migrations/20260729_add_user_uid.sql
+docs/migrations/20260729_add_user_last_login_at.sql
+docs/migrations/20260729_create_flight_scripts.sql
+docs/migrations/20260801_create_simulation_tasks.sql
+```
 
 Valid user roles:
 
@@ -62,14 +87,14 @@ disabled
 
 ## Login
 
-### POST `/api/login`
+### POST `/api/auth/login`
 
 Request:
 
 ```json
 {
   "username": "admin",
-  "password": "admin123"
+  "password": "<admin-password>"
 }
 ```
 
@@ -79,7 +104,18 @@ Success response:
 {
   "success": true,
   "message": "Login successful",
-  "role": "admin"
+  "data": {
+    "token": "<jwt-token>",
+    "token_type": "bearer",
+    "user": {
+      "id": 1,
+      "uid": "U000001",
+      "username": "admin",
+      "role": "admin",
+      "status": "active",
+      "last_login_at": "2026-07-24T10:00:00"
+    }
+  }
 }
 ```
 
@@ -88,25 +124,109 @@ Failure response:
 ```json
 {
   "success": false,
-  "message": "Incorrect password"
+  "message": "Invalid username or password",
+  "data": null
 }
 ```
 
 Possible failure messages:
 
 ```text
-User does not exist
+Invalid username or password
 Account is disabled
-Incorrect password
 ```
 
 Frontend usage:
 
-After successful login, store the username and role in frontend state. If `role` is `admin`, show user management and model management pages. If `role` is `normal`, show only ordinary user features.
+After successful login, store the token and user in frontend state. Send the token in the `Authorization` header for authenticated requests. If `user.role` is `admin`, show user management and model management pages. If `user.role` is `normal`, show only ordinary user features.
+
+### POST `/api/auth/logout`
+
+Logout the current user.
+
+Headers:
+
+```http
+Authorization: Bearer <token>
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "message": "Logout successful",
+  "data": null
+}
+```
+
+This endpoint does not revoke the JWT on the backend yet. The frontend should delete the stored token after a successful response.
+
+### GET `/api/auth/me`
+
+Get the current logged-in user.
+
+Headers:
+
+```http
+Authorization: Bearer <token>
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "message": "Current user fetched successfully",
+  "data": {
+    "user": {
+      "id": 1,
+      "uid": "U000001",
+      "username": "admin",
+      "role": "admin",
+      "status": "active",
+      "last_login_at": "2026-07-24T10:00:00",
+      "created_at": "2026-07-24T10:00:00",
+      "updated_at": "2026-07-24T10:00:00"
+    }
+  }
+}
+```
+
+### PATCH `/api/users/me/password`
+
+Change the current user's password.
+
+Headers:
+
+```http
+Authorization: Bearer <token>
+```
+
+Request:
+
+```json
+{
+  "old_password": "old-password",
+  "new_password": "new-password123"
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "message": "Password changed successfully",
+  "data": null
+}
+```
 
 ## User Management
 
-### POST `/api/users`
+All user management APIs require an admin token.
+
+### POST `/api/admin/users`
 
 Create a user.
 
@@ -115,7 +235,7 @@ Request:
 ```json
 {
   "username": "user1",
-  "password": "123456",
+  "password": "password123",
   "role": "normal"
 }
 ```
@@ -125,11 +245,22 @@ Response:
 ```json
 {
   "success": true,
-  "message": "User created successfully"
+  "message": "User created successfully",
+  "data": null
 }
 ```
 
-### GET `/api/users`
+Duplicate username response:
+
+```json
+{
+  "success": false,
+  "message": "Username already exists",
+  "data": null
+}
+```
+
+### GET `/api/admin/users`
 
 List all users.
 
@@ -138,22 +269,27 @@ Response:
 ```json
 {
   "success": true,
-  "users": [
-    {
-      "id": 1,
-      "username": "admin",
-      "role": "admin",
-      "status": "active",
-      "created_at": "2026-07-24T10:00:00",
-      "updated_at": "2026-07-24T10:00:00"
-    }
-  ]
+  "message": "Users fetched successfully",
+  "data": {
+    "users": [
+      {
+        "id": 1,
+        "uid": "U000001",
+        "username": "admin",
+        "role": "admin",
+        "status": "active",
+        "last_login_at": "2026-07-24T10:00:00",
+        "created_at": "2026-07-24T10:00:00",
+        "updated_at": "2026-07-24T10:00:00"
+      }
+    ]
+  }
 }
 ```
 
-### GET `/api/users/{user_id}`
+### GET `/api/admin/users/by-username/{username}`
 
-Get one user by ID.
+Get one user by username.
 
 Response:
 
@@ -161,18 +297,69 @@ Response:
 {
   "success": true,
   "message": "User found",
-  "user": {
-    "id": 1,
-    "username": "admin",
-    "role": "admin",
-    "status": "active",
-    "created_at": "2026-07-24T10:00:00",
-    "updated_at": "2026-07-24T10:00:00"
+  "data": {
+    "user": {
+      "id": 1,
+      "uid": "U000001",
+      "username": "admin",
+      "role": "admin",
+      "status": "active",
+      "last_login_at": "2026-07-24T10:00:00",
+      "created_at": "2026-07-24T10:00:00",
+      "updated_at": "2026-07-24T10:00:00"
+    }
   }
 }
 ```
 
-### PATCH `/api/users/{user_id}/role`
+### GET `/api/admin/users/{uid}`
+
+Get one user by UID.
+
+Response:
+
+```json
+{
+  "success": true,
+  "message": "User found",
+  "data": {
+    "user": {
+      "id": 1,
+      "uid": "U000001",
+      "username": "admin",
+      "role": "admin",
+      "status": "active",
+      "last_login_at": "2026-07-24T10:00:00",
+      "created_at": "2026-07-24T10:00:00",
+      "updated_at": "2026-07-24T10:00:00"
+    }
+  }
+}
+```
+
+### PATCH `/api/admin/users/{uid}/password`
+
+Reset a user's password. Admin token required.
+
+Request:
+
+```json
+{
+  "new_password": "new-password123"
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "message": "User password reset successfully",
+  "data": null
+}
+```
+
+### PATCH `/api/admin/users/{uid}/role`
 
 Update a user's role.
 
@@ -189,11 +376,12 @@ Response:
 ```json
 {
   "success": true,
-  "message": "User role updated successfully"
+  "message": "User role updated successfully",
+  "data": null
 }
 ```
 
-### PATCH `/api/users/{user_id}/status`
+### PATCH `/api/admin/users/{uid}/status`
 
 Enable or disable a user.
 
@@ -210,7 +398,8 @@ Response:
 ```json
 {
   "success": true,
-  "message": "User status updated successfully"
+  "message": "User status updated successfully",
+  "data": null
 }
 ```
 
@@ -220,6 +409,100 @@ Recommended frontend interaction:
 - Create user dialog with username, password, role.
 - Role selector for `admin` / `normal`.
 - Status toggle for `active` / `disabled`.
+
+## Flight Scripts
+
+Script files are stored under `data/` by default:
+
+```text
+data/users/U000001/scripts/F000001.py
+data/public/scripts/F000002.py
+```
+
+Script objects use `script_code` as the external identifier.
+
+### POST `/api/scripts`
+
+Upload a private script for the current user. Use `multipart/form-data`.
+
+Fields:
+
+```text
+name: user-facing script name
+description: optional description
+file: script file
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "message": "Script uploaded successfully",
+  "data": {
+    "script": {
+      "id": 1,
+      "script_code": "F000001",
+      "owner_user_id": 2,
+      "name": "Landing Case A",
+      "original_filename": "landing_case_a.py",
+      "file_path": "data/users/U000002/scripts/F000001.py",
+      "scope": "private",
+      "status": "active",
+      "description": "Landing simulation input",
+      "created_at": "2026-07-24T10:00:00",
+      "updated_at": "2026-07-24T10:00:00"
+    }
+  }
+}
+```
+
+### GET `/api/scripts`
+
+List scripts available to the current user: public scripts plus the user's own private scripts.
+
+### GET `/api/scripts/{script_code}`
+
+Get one accessible script.
+
+### GET `/api/scripts/{script_code}/download`
+
+Download one accessible script file.
+
+### DELETE `/api/scripts/{script_code}`
+
+Soft-delete the current user's own private script.
+
+### POST `/api/admin/scripts`
+
+Upload a public script. Admin token required. Use `multipart/form-data` with the same fields as `POST /api/scripts`.
+
+### GET `/api/admin/scripts`
+
+List all non-deleted scripts. Use `include_deleted=true` to include deleted scripts.
+
+### GET `/api/admin/scripts/{script_code}`
+
+Get one script as admin.
+
+### PATCH `/api/admin/scripts/{script_code}`
+
+Update script metadata as admin.
+
+Request:
+
+```json
+{
+  "name": "Updated Landing Case",
+  "description": "Updated description",
+  "scope": "public",
+  "status": "active"
+}
+```
+
+### DELETE `/api/admin/scripts/{script_code}`
+
+Soft-delete any script as admin.
 
 ## Model Access Rules
 
@@ -483,7 +766,7 @@ Login:
 
 ```javascript
 async function login(baseUrl, username, password) {
-  const response = await fetch(`${baseUrl}/api/login`, {
+  const response = await fetch(`${baseUrl}/api/auth/login`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -525,8 +808,67 @@ async function listAccessibleModels(baseUrl, username) {
 
 ## Current Limitations
 
-- No backend login session or API token yet.
-- Admin APIs are not protected on the backend yet.
-- Password reset/change APIs are not implemented yet.
-- API errors currently use `success: false` in the JSON body instead of detailed HTTP status codes.
+- Model version APIs have not been migrated to JWT auth yet.
+- Some older model version API errors still use `success: false` in the JSON body instead of detailed HTTP status codes.
 - Model file upload is not implemented yet; `model_path` is stored as text.
+
+## Simulation Tasks
+
+- `POST /api/simulations`
+- `GET /api/simulations`
+- `GET /api/simulations/{task_code}`
+- `GET /api/simulations/{task_code}/result`
+- `GET /api/simulations/{task_code}/report`
+- `POST /api/simulations/{task_code}/cancel`
+
+### POST `/api/simulations`
+
+Submit a simulation task. The current backend does not require `model_version_id`; it uses the default `python_mock` model.
+
+Request body:
+
+```json
+{
+  "script_code": "F000001",
+  "output_parameters": ["altitude_m", "speed_kmh"]
+}
+```
+
+The script file must be FlightScript JSON 1.0:
+
+```json
+{
+  "schema_version": "1.0",
+  "subject": {"code": "level-flight", "name": "Level Flight"},
+  "test_points": [
+    {
+      "id": "TP-001",
+      "initial_conditions": {
+        "altitude_m": 5000,
+        "speed_kmh": 450
+      },
+      "duration_s": 60
+    }
+  ]
+}
+```
+
+### GET `/api/simulations`
+
+List the current user's simulation tasks.
+
+### GET `/api/simulations/{task_code}`
+
+Fetch a simulation task status.
+
+### GET `/api/simulations/{task_code}/result`
+
+Fetch simulation result summary and time-series data.
+
+### GET `/api/simulations/{task_code}/report`
+
+Download the generated HTML report.
+
+### POST `/api/simulations/{task_code}/cancel`
+
+Request cancellation for an unfinished simulation task. Cancellation is cooperative and takes effect between test points.

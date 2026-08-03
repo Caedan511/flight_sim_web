@@ -3,4 +3,5 @@ python-dotenv
 werkzeug
 fastapi 
 uvicorn 
+python-multipart
 requests

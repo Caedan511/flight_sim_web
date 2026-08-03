@@ -1,5 +1,5 @@
 import pymysql
-from config import Config
+from backend.core.config import Config
 
 
 def get_connection(use_database=True):
