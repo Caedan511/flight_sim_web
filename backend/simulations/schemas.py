@@ -16,6 +16,7 @@ OutputParameter = Literal[
 
 class SubmitSimulationRequest(BaseModel):
     script_code: str = Field(..., min_length=1)
+    model_version: str | None = Field(None, min_length=1, max_length=50)
     report_template_code: str = "standard"
     output_parameters: list[OutputParameter] = Field(default_factory=list)
     timeout_seconds: int = Field(3600, ge=1, le=86400)
@@ -24,6 +25,13 @@ class SubmitSimulationRequest(BaseModel):
     @classmethod
     def normalize_script_code(cls, value):
         return value.strip().upper()
+
+    @field_validator("model_version")
+    @classmethod
+    def normalize_model_version(cls, value):
+        if value is None:
+            return None
+        return value.strip()
 
     @field_validator("report_template_code")
     @classmethod

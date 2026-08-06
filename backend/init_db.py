@@ -97,6 +97,7 @@ def create_tables():
                 user_uid VARCHAR(20) NOT NULL,
                 script_code VARCHAR(20) NOT NULL,
                 subject VARCHAR(100) NOT NULL,
+                model_version VARCHAR(50) NULL,
                 model_name VARCHAR(100) NOT NULL,
                 report_template_code VARCHAR(50) NOT NULL DEFAULT 'standard',
                 output_parameters_json TEXT,
@@ -120,6 +121,7 @@ def create_tables():
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 KEY idx_simulation_tasks_user (user_id),
                 KEY idx_simulation_tasks_script (script_code),
+                KEY idx_simulation_tasks_model_version (model_version),
                 KEY idx_simulation_tasks_status (status),
                 KEY idx_simulation_tasks_submitted_at (submitted_at)
             );

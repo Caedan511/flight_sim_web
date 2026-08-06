@@ -26,6 +26,7 @@ class TaskStatus(str, Enum):
 class ModelSpec:
     model_name: str
     model_type: str
+    model_version: str | None = None
     model_path: str | None = None
     interface_version: str = "1.0"
 
@@ -41,6 +42,7 @@ class SimulationRequest:
     script_code: str
     script_data: dict[str, Any]
     model: ModelSpec
+    model_version: str | None
     output_directory: str
     report_template_code: str = "standard"
     output_parameters: tuple[str, ...] = ()
@@ -78,6 +80,7 @@ class TaskRecord:
     user_uid: str
     script_code: str
     subject: str
+    model_version: str | None
     model_name: str
     report_template_code: str
     output_parameters: list[str]

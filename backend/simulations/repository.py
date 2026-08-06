@@ -45,6 +45,7 @@ def _record_from_row(row, artifacts=None):
         user_uid=row["user_uid"],
         script_code=row["script_code"],
         subject=row["subject"],
+        model_version=row.get("model_version"),
         model_name=row["model_name"],
         report_template_code=row["report_template_code"],
         output_parameters=_json_loads(row.get("output_parameters_json")),
@@ -68,6 +69,7 @@ def create_task(
     user_uid,
     script_code,
     subject,
+    model_version,
     model_name,
     report_template_code,
     output_parameters,
@@ -79,13 +81,13 @@ def create_task(
             cursor.execute("""
             INSERT INTO simulation_tasks (
                 task_code, user_id, user_uid, script_code,
-                subject, model_name, report_template_code,
+                subject, model_version, model_name, report_template_code,
                 output_parameters_json, output_directory, status, progress,
                 message
             )
             VALUES (
                 %s, %s, %s, %s,
-                %s, %s, %s,
+                %s, %s, %s, %s,
                 %s, %s, 'queued', 0,
                 'Simulation task queued'
             )
@@ -95,6 +97,7 @@ def create_task(
                 user_uid,
                 script_code,
                 subject,
+                model_version,
                 model_name,
                 report_template_code,
                 _json_dumps(output_parameters),

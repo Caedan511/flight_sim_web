@@ -1,39 +1,57 @@
 # Frontend API Integration Guide
 
+## Table of Contents
+
+- [Base URL](#base-url)
+- [Default Admin](#default-admin)
+- [Common Rules](#common-rules)
+- [Public Identifiers](#public-identifiers)
+- [Authentication](#authentication)
+- [User Management](#user-management)
+- [Flight Scripts](#flight-scripts)
+- [Model Management](#model-management)
+- [Simulation Tasks](#simulation-tasks)
+
 ## Base URL
 
-During local development, run the backend on the host machine:
-
-```bash
-conda run -n flight_web python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
-```
-
-Frontend requests should use:
+Frontend request base URL:
 
 ```text
-http://<backend-host-ip>:8000
+http://<backend-machine-ip>:8000
 ```
 
-Examples:
+## Default Admin
+
+Default integration admin account:
 
 ```text
-http://127.0.0.1:8000
-http://192.168.x.x:8000
+username: admin
+password: admin123
 ```
-
-Use `127.0.0.1` only when the frontend runs on the same machine as the backend. If another developer connects from a different machine on the same network, use the backend machine's LAN IP.
 
 ## Common Rules
 
-All request and response bodies are JSON.
+Except for file upload and file download endpoints, request and response bodies are JSON.
 
-Request header:
+JSON request header:
 
 ```http
 Content-Type: application/json
 ```
 
-New auth and admin user APIs return:
+File upload endpoints use:
+
+```http
+Content-Type: multipart/form-data
+```
+
+Authenticated endpoints require:
+
+```http
+Authorization: Bearer <token>
+```
+
+Success response shape:
 
 ```json
 {
@@ -43,32 +61,50 @@ New auth and admin user APIs return:
 }
 ```
 
-Errors use the same JSON shape with an appropriate HTTP status code.
+Error response shape:
 
-Authenticated requests should include:
-
-```http
-Authorization: Bearer <token>
+```json
+{
+  "success": false,
+  "message": "Error message",
+  "data": null
+}
 ```
 
-Model version APIs have not been moved to the authenticated route structure yet. They will be updated separately.
+Common HTTP status codes:
 
-## User Roles and Status
+| Status | Meaning |
+| --- | --- |
+| `400` | Invalid request or business validation failed |
+| `401` | Missing, invalid, or expired token |
+| `403` | Logged in but permission denied, or account disabled |
+| `404` | Resource does not exist |
+| `409` | Operation is not allowed in the current state |
 
-User objects include both:
+## Public Identifiers
 
-```text
-id: internal database primary key
-uid: fixed-width display/API identifier, such as U000001
-```
+Public APIs use these identifiers:
 
-For an existing database, run these migrations before deploying this code:
+| Resource | Frontend field | Example |
+| --- | --- | --- |
+| User | `uid` | `U000001` |
+| Flight script | `script_code` | `F000001` |
+| Model version | `version` | `v1.0.0` |
+| Simulation task | `task_code` | `T000001` |
+| Simulation artifact | `artifact_code` | `T000001-report-report` |
 
-```text
-docs/migrations/20260729_add_user_uid.sql
-docs/migrations/20260729_add_user_last_login_at.sql
-docs/migrations/20260729_create_flight_scripts.sql
-docs/migrations/20260801_create_simulation_tasks.sql
+User object example:
+
+```json
+{
+  "uid": "U000001",
+  "username": "admin",
+  "role": "admin",
+  "status": "active",
+  "last_login_at": "2026-08-05T10:00:00",
+  "created_at": "2026-08-05T10:00:00",
+  "updated_at": "2026-08-05T10:00:00"
+}
 ```
 
 Valid user roles:
@@ -85,7 +121,16 @@ active
 disabled
 ```
 
-## Login
+## Authentication
+
+### Endpoint List
+
+| Method | Path | Permission | Description |
+| --- | --- | --- | --- |
+| `POST` | `/api/auth/login` | None | Log in and get a token |
+| `POST` | `/api/auth/logout` | Logged-in user | Clear frontend login state |
+| `GET` | `/api/auth/me` | Logged-in user | Get current user |
+| `PATCH` | `/api/users/me/password` | Logged-in user | Change own password |
 
 ### POST `/api/auth/login`
 
@@ -94,7 +139,7 @@ Request:
 ```json
 {
   "username": "admin",
-  "password": "<admin-password>"
+  "password": "admin123"
 }
 ```
 
@@ -108,41 +153,28 @@ Success response:
     "token": "<jwt-token>",
     "token_type": "bearer",
     "user": {
-      "id": 1,
       "uid": "U000001",
       "username": "admin",
       "role": "admin",
       "status": "active",
-      "last_login_at": "2026-07-24T10:00:00"
+      "last_login_at": "2026-08-05T10:00:00",
+      "created_at": "2026-08-05T10:00:00",
+      "updated_at": "2026-08-05T10:00:00"
     }
   }
 }
 ```
 
-Failure response:
+The frontend should store `data.token` and send it in the `Authorization` header for later requests.
 
-```json
-{
-  "success": false,
-  "message": "Invalid username or password",
-  "data": null
-}
-```
-
-Possible failure messages:
+Possible errors:
 
 ```text
 Invalid username or password
 Account is disabled
 ```
 
-Frontend usage:
-
-After successful login, store the token and user in frontend state. Send the token in the `Authorization` header for authenticated requests. If `user.role` is `admin`, show user management and model management pages. If `user.role` is `normal`, show only ordinary user features.
-
 ### POST `/api/auth/logout`
-
-Logout the current user.
 
 Headers:
 
@@ -160,11 +192,9 @@ Response:
 }
 ```
 
-This endpoint does not revoke the JWT on the backend yet. The frontend should delete the stored token after a successful response.
+The backend does not maintain a JWT denylist yet. After a successful response, the frontend can delete the local token.
 
 ### GET `/api/auth/me`
-
-Get the current logged-in user.
 
 Headers:
 
@@ -180,22 +210,19 @@ Response:
   "message": "Current user fetched successfully",
   "data": {
     "user": {
-      "id": 1,
       "uid": "U000001",
       "username": "admin",
       "role": "admin",
       "status": "active",
-      "last_login_at": "2026-07-24T10:00:00",
-      "created_at": "2026-07-24T10:00:00",
-      "updated_at": "2026-07-24T10:00:00"
+      "last_login_at": "2026-08-05T10:00:00",
+      "created_at": "2026-08-05T10:00:00",
+      "updated_at": "2026-08-05T10:00:00"
     }
   }
 }
 ```
 
 ### PATCH `/api/users/me/password`
-
-Change the current user's password.
 
 Headers:
 
@@ -207,7 +234,7 @@ Request:
 
 ```json
 {
-  "old_password": "old-password",
+  "old_password": "admin123",
   "new_password": "new-password123"
 }
 ```
@@ -222,23 +249,49 @@ Response:
 }
 ```
 
+Possible errors:
+
+```text
+Old password is incorrect
+New password must be different from old password
+Account is disabled
+```
+
 ## User Management
 
-All user management APIs require an admin token.
+All user management endpoints require an admin token.
+
+### Endpoint List
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `POST` | `/api/admin/users` | Create a user |
+| `GET` | `/api/admin/users` | List users |
+| `GET` | `/api/admin/users/{uid}` | Get user by `uid` |
+| `GET` | `/api/admin/users/by-username/{username}` | Get user by username |
+| `PATCH` | `/api/admin/users/{uid}/password` | Reset user password |
+| `PATCH` | `/api/admin/users/{uid}/role` | Update user role |
+| `PATCH` | `/api/admin/users/{uid}/status` | Update user status |
 
 ### POST `/api/admin/users`
-
-Create a user.
 
 Request:
 
 ```json
 {
-  "username": "user1",
+  "username": "test_user",
   "password": "password123",
   "role": "normal"
 }
 ```
+
+Field rules:
+
+| Field | Rule |
+| --- | --- |
+| `username` | Required, 1-50 characters |
+| `password` | Required, 8-128 characters |
+| `role` | `admin` or `normal`; default `normal` |
 
 Response:
 
@@ -250,19 +303,7 @@ Response:
 }
 ```
 
-Duplicate username response:
-
-```json
-{
-  "success": false,
-  "message": "Username already exists",
-  "data": null
-}
-```
-
 ### GET `/api/admin/users`
-
-List all users.
 
 Response:
 
@@ -273,73 +314,40 @@ Response:
   "data": {
     "users": [
       {
-        "id": 1,
         "uid": "U000001",
         "username": "admin",
         "role": "admin",
         "status": "active",
-        "last_login_at": "2026-07-24T10:00:00",
-        "created_at": "2026-07-24T10:00:00",
-        "updated_at": "2026-07-24T10:00:00"
+        "last_login_at": "2026-08-05T10:00:00",
+        "created_at": "2026-08-05T10:00:00",
+        "updated_at": "2026-08-05T10:00:00"
       }
     ]
   }
 }
 ```
 
-### GET `/api/admin/users/by-username/{username}`
-
-Get one user by username.
-
-Response:
-
-```json
-{
-  "success": true,
-  "message": "User found",
-  "data": {
-    "user": {
-      "id": 1,
-      "uid": "U000001",
-      "username": "admin",
-      "role": "admin",
-      "status": "active",
-      "last_login_at": "2026-07-24T10:00:00",
-      "created_at": "2026-07-24T10:00:00",
-      "updated_at": "2026-07-24T10:00:00"
-    }
-  }
-}
-```
-
 ### GET `/api/admin/users/{uid}`
 
-Get one user by UID.
+Example:
 
-Response:
-
-```json
-{
-  "success": true,
-  "message": "User found",
-  "data": {
-    "user": {
-      "id": 1,
-      "uid": "U000001",
-      "username": "admin",
-      "role": "admin",
-      "status": "active",
-      "last_login_at": "2026-07-24T10:00:00",
-      "created_at": "2026-07-24T10:00:00",
-      "updated_at": "2026-07-24T10:00:00"
-    }
-  }
-}
+```text
+GET /api/admin/users/U000002
 ```
 
-### PATCH `/api/admin/users/{uid}/password`
+The response `data.user` has the same shape as the user object.
 
-Reset a user's password. Admin token required.
+### GET `/api/admin/users/by-username/{username}`
+
+Example:
+
+```text
+GET /api/admin/users/by-username/test_user
+```
+
+The response `data.user` has the same shape as the user object.
+
+### PATCH `/api/admin/users/{uid}/password`
 
 Request:
 
@@ -361,29 +369,21 @@ Response:
 
 ### PATCH `/api/admin/users/{uid}/role`
 
-Update a user's role.
-
 Request:
 
 ```json
 {
-  "role": "admin"
+  "role": "normal"
 }
 ```
 
-Response:
+If the role is already up to date, the endpoint still returns success:
 
-```json
-{
-  "success": true,
-  "message": "User role updated successfully",
-  "data": null
-}
+```text
+User role is already up to date
 ```
 
 ### PATCH `/api/admin/users/{uid}/status`
-
-Enable or disable a user.
 
 Request:
 
@@ -393,45 +393,61 @@ Request:
 }
 ```
 
-Response:
+If the status is already up to date, the endpoint still returns success:
 
-```json
-{
-  "success": true,
-  "message": "User status updated successfully",
-  "data": null
-}
+```text
+User status is already up to date
 ```
-
-Recommended frontend interaction:
-
-- User management table with columns: ID, username, role, status, created time, updated time.
-- Create user dialog with username, password, role.
-- Role selector for `admin` / `normal`.
-- Status toggle for `active` / `disabled`.
 
 ## Flight Scripts
 
-Script files are stored under `data/` by default:
+Flight scripts are used when submitting simulation tasks. A normal user can access their own private scripts and public scripts uploaded by admins.
 
-```text
-data/users/U000001/scripts/F000001.py
-data/public/scripts/F000002.py
+Script object example:
+
+```json
+{
+  "script_code": "F000001",
+  "name": "Level Flight Test",
+  "original_filename": "level_flight.json",
+  "scope": "private",
+  "status": "active",
+  "description": "Level flight script",
+  "created_at": "2026-08-05T10:00:00",
+  "updated_at": "2026-08-05T10:00:00"
+}
 ```
 
-Script objects use `script_code` as the external identifier.
+### Endpoint List
+
+| Method | Path | Permission | Description |
+| --- | --- | --- | --- |
+| `POST` | `/api/scripts` | Logged-in user | Upload a private script |
+| `GET` | `/api/scripts` | Logged-in user | List accessible active scripts |
+| `GET` | `/api/scripts/{script_code}` | Logged-in user | Get script detail |
+| `GET` | `/api/scripts/{script_code}/download` | Logged-in user | Download script file |
+| `DELETE` | `/api/scripts/{script_code}` | Logged-in user | Delete own private script |
+| `POST` | `/api/admin/scripts` | Admin | Upload a public script |
+| `GET` | `/api/admin/scripts` | Admin | List all scripts |
+| `GET` | `/api/admin/scripts/{script_code}` | Admin | Get any script detail |
+| `PATCH` | `/api/admin/scripts/{script_code}` | Admin | Update script metadata |
+| `DELETE` | `/api/admin/scripts/{script_code}` | Admin | Delete any script |
 
 ### POST `/api/scripts`
 
-Upload a private script for the current user. Use `multipart/form-data`.
-
-Fields:
+Request content type:
 
 ```text
-name: user-facing script name
-description: optional description
-file: script file
+multipart/form-data
 ```
+
+Form fields:
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `name` | Yes | Script name |
+| `description` | No | Script description |
+| `file` | Yes | Script file |
 
 Response:
 
@@ -441,17 +457,14 @@ Response:
   "message": "Script uploaded successfully",
   "data": {
     "script": {
-      "id": 1,
       "script_code": "F000001",
-      "owner_user_id": 2,
-      "name": "Landing Case A",
-      "original_filename": "landing_case_a.py",
-      "file_path": "data/users/U000002/scripts/F000001.py",
+      "name": "Level Flight Test",
+      "original_filename": "flight_script.json",
       "scope": "private",
       "status": "active",
-      "description": "Landing simulation input",
-      "created_at": "2026-07-24T10:00:00",
-      "updated_at": "2026-07-24T10:00:00"
+      "description": "Level flight script",
+      "created_at": "2026-08-05T10:00:00",
+      "updated_at": "2026-08-05T10:00:00"
     }
   }
 }
@@ -459,189 +472,203 @@ Response:
 
 ### GET `/api/scripts`
 
-List scripts available to the current user: public scripts plus the user's own private scripts.
-
-### GET `/api/scripts/{script_code}`
-
-Get one accessible script.
-
-### GET `/api/scripts/{script_code}/download`
-
-Download one accessible script file.
-
-### DELETE `/api/scripts/{script_code}`
-
-Soft-delete the current user's own private script.
-
-### POST `/api/admin/scripts`
-
-Upload a public script. Admin token required. Use `multipart/form-data` with the same fields as `POST /api/scripts`.
-
-### GET `/api/admin/scripts`
-
-List all non-deleted scripts. Use `include_deleted=true` to include deleted scripts.
-
-### GET `/api/admin/scripts/{script_code}`
-
-Get one script as admin.
-
-### PATCH `/api/admin/scripts/{script_code}`
-
-Update script metadata as admin.
-
-Request:
+Response:
 
 ```json
 {
-  "name": "Updated Landing Case",
-  "description": "Updated description",
-  "scope": "public",
-  "status": "active"
+  "success": true,
+  "message": "Scripts fetched successfully",
+  "data": {
+    "scripts": [
+      {
+        "script_code": "F000001",
+        "name": "Level Flight Test",
+        "original_filename": "flight_script.json",
+        "scope": "private",
+        "status": "active",
+        "description": "Level flight script",
+        "created_at": "2026-08-05T10:00:00",
+        "updated_at": "2026-08-05T10:00:00"
+      }
+    ]
+  }
 }
 ```
 
-### DELETE `/api/admin/scripts/{script_code}`
+### GET `/api/scripts/{script_code}`
 
-Soft-delete any script as admin.
+The response `data.script` has the same shape as the script object.
 
-## Model Access Rules
+### GET `/api/scripts/{script_code}/download`
 
-Valid model statuses:
+Returns a file stream, not JSON. The frontend can use the browser download flow.
 
-```text
-active
-disabled
+### DELETE `/api/scripts/{script_code}`
+
+Only the current user's own private scripts can be deleted. Response:
+
+```json
+{
+  "success": true,
+  "message": "Script deleted successfully",
+  "data": null
+}
 ```
 
-Valid access scopes:
+### POST `/api/admin/scripts`
+
+Upload a public script as admin. The request content type and fields are the same as `POST /api/scripts`.
+
+### GET `/api/admin/scripts`
+
+Query parameters:
+
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `include_deleted` | `false` | Whether to include deleted scripts |
+
+Example:
 
 ```text
-private
-all_users
+GET /api/admin/scripts?include_deleted=false
 ```
 
-Access behavior:
+### PATCH `/api/admin/scripts/{script_code}`
 
-- `admin` users can use every active model.
-- `normal` users can use active models with `access_scope = "all_users"`.
-- `normal` users can also use private models if they have a permission record with `can_use = 1`.
+All fields are optional, but at least one field is required:
+
+```json
+{
+  "name": "Updated Script Name",
+  "description": "Updated description",
+  "status": "active",
+  "scope": "public"
+}
+```
+
+Allowed values:
+
+| Field | Values |
+| --- | --- |
+| `status` | `active`, `disabled`, `deleted` |
+| `scope` | `private`, `public` |
 
 ## Model Management
 
-### POST `/api/model-versions`
+Model management has two categories:
 
-Create a model version.
+| Type | Endpoint | Purpose |
+| --- | --- | --- |
+| Admin endpoints | `/api/model-versions` | Upload models, manage models, grant access |
+| User endpoint | `/api/model-versions/accessible` | List models available to the current user |
 
-Request:
+The current simulation runner can directly load local dynamic library models, such as `.so`, `.dll`, and `.dylib`.
+
+Access rules:
+
+- Admin users can use every active model.
+- Normal users can use active models with `access_scope = "all_users"`.
+- Normal users can also use private models if they have an explicit permission record with `can_use = true`.
+
+Model object example:
 
 ```json
 {
   "version": "v1.0.0",
   "model_name": "Flight Model A",
-  "model_path": "/models/flight_model_a.pkl",
   "description": "Baseline model",
+  "status": "active",
   "access_scope": "private",
-  "created_by": 1
+  "created_by_uid": "U000001",
+  "created_by_username": "admin",
+  "created_at": "2026-08-05T10:00:00",
+  "updated_at": "2026-08-05T10:00:00"
 }
 ```
+
+### Endpoint List
+
+| Method | Path | Permission | Description |
+| --- | --- | --- | --- |
+| `POST` | `/api/model-versions` | Admin | Upload and create a model version |
+| `GET` | `/api/model-versions` | Admin | List model versions |
+| `GET` | `/api/model-versions/accessible` | Logged-in user | List current user's accessible models |
+| `PATCH` | `/api/model-versions/{version}` | Admin | Update model metadata |
+| `GET` | `/api/model-versions/{version}/permissions` | Admin | List model permission records |
+| `POST` | `/api/model-versions/{version}/permissions` | Admin | Grant one user access |
+| `POST` | `/api/model-versions/{version}/permissions/revoke` | Admin | Revoke one user's access |
+
+### POST `/api/model-versions`
+
+Request content type:
+
+```text
+multipart/form-data
+```
+
+Form fields:
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `version` | Yes | Model version, for example `v1.0.0` |
+| `model_name` | Yes | Model display name |
+| `file` | Yes | Model file |
+| `description` | No | Model description |
+| `access_scope` | No | `private` or `all_users`; default `private` |
 
 Response:
 
 ```json
 {
   "success": true,
-  "message": "Model version created successfully"
+  "message": "Model version created successfully",
+  "data": null
 }
 ```
-
-Use `"access_scope": "all_users"` when every active user should be able to use the model without individual authorization.
 
 ### GET `/api/model-versions`
 
-List model versions.
-
 Query parameters:
 
-```text
-include_disabled=true
-include_disabled=false
-```
-
-Example:
-
-```text
-GET /api/model-versions?include_disabled=true
-```
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `include_disabled` | `true` | Whether to include disabled models |
 
 Response:
 
 ```json
 {
   "success": true,
-  "models": [
-    {
-      "id": 1,
-      "version": "v1.0.0",
-      "model_name": "Flight Model A",
-      "model_path": "/models/flight_model_a.pkl",
-      "description": "Baseline model",
-      "status": "active",
-      "access_scope": "private",
-      "created_by": 1,
-      "created_at": "2026-07-24T10:00:00",
-      "updated_at": "2026-07-24T10:00:00"
-    }
-  ]
+  "message": "Model versions fetched successfully",
+  "data": {
+    "models": [
+      {
+        "version": "v1.0.0",
+        "model_name": "Flight Model A",
+        "description": "Baseline model",
+        "status": "active",
+        "access_scope": "private",
+        "created_by_uid": "U000001",
+        "created_by_username": "admin",
+        "created_at": "2026-08-05T10:00:00",
+        "updated_at": "2026-08-05T10:00:00"
+      }
+    ]
+  }
 }
 ```
 
 ### GET `/api/model-versions/accessible`
 
-List model versions available to a specific user.
+Returns active models available to the current logged-in user. The frontend model selector should use this endpoint.
 
-Query parameters:
+### PATCH `/api/model-versions/{version}`
 
-```text
-username=user1
-```
-
-Example:
-
-```text
-GET /api/model-versions/accessible?username=user1
-```
-
-Response:
+All fields are optional, but at least one field is required:
 
 ```json
 {
-  "success": true,
-  "models": [
-    {
-      "id": 1,
-      "version": "v1.0.0",
-      "model_name": "Flight Model A",
-      "model_path": "/models/flight_model_a.pkl",
-      "description": "Baseline model",
-      "status": "active",
-      "access_scope": "all_users"
-    }
-  ]
-}
-```
-
-Use this endpoint for the model selector on normal user workflows.
-
-### PATCH `/api/model-versions/{model_version_id}`
-
-Update a model version.
-
-All fields are optional, but at least one field should be provided.
-
-Request:
-
-```json
-{
+  "version": "v1.0.1",
   "model_name": "Flight Model A Updated",
   "description": "Updated baseline model",
   "status": "active",
@@ -649,51 +676,40 @@ Request:
 }
 ```
 
-Response:
-
-```json
-{
-  "success": true,
-  "message": "Model version updated successfully"
-}
-```
-
-### GET `/api/model-versions/{model_version_id}/permissions`
-
-List permission records for a model version.
+### GET `/api/model-versions/{version}/permissions`
 
 Response:
 
 ```json
 {
   "success": true,
-  "permissions": [
-    {
-      "id": 1,
-      "model_version_id": 1,
-      "user_id": 2,
-      "username": "user1",
-      "role": "normal",
-      "user_status": "active",
-      "can_use": 1,
-      "granted_by": 1,
-      "created_at": "2026-07-24T10:00:00",
-      "updated_at": "2026-07-24T10:00:00"
-    }
-  ]
+  "message": "Model version permissions fetched successfully",
+  "data": {
+    "permissions": [
+      {
+        "model_version": "v1.0.0",
+        "user_uid": "U000002",
+        "username": "test_user",
+        "role": "normal",
+        "user_status": "active",
+        "can_use": true,
+        "granted_by_uid": "U000001",
+        "granted_by_username": "admin",
+        "created_at": "2026-08-05T10:00:00",
+        "updated_at": "2026-08-05T10:00:00"
+      }
+    ]
+  }
 }
 ```
 
-### POST `/api/model-versions/{model_version_id}/permissions`
-
-Grant one user access to a private model version.
+### POST `/api/model-versions/{version}/permissions`
 
 Request:
 
 ```json
 {
-  "user_id": 2,
-  "granted_by": 1
+  "user_uid": "U000002"
 }
 ```
 
@@ -702,19 +718,18 @@ Response:
 ```json
 {
   "success": true,
-  "message": "Model version access granted successfully"
+  "message": "Model version access granted successfully",
+  "data": null
 }
 ```
 
-### POST `/api/model-versions/{model_version_id}/permissions/revoke`
-
-Revoke one user's access to a model version.
+### POST `/api/model-versions/{version}/permissions/revoke`
 
 Request:
 
 ```json
 {
-  "user_id": 2
+  "user_uid": "U000002"
 }
 ```
 
@@ -723,152 +738,304 @@ Response:
 ```json
 {
   "success": true,
-  "message": "Model version access revoked successfully"
+  "message": "Model version access revoked successfully",
+  "data": null
 }
 ```
-
-The revoke operation sets `can_use = 0`; it does not delete the permission record.
-
-Recommended frontend interaction:
-
-- Model management table with columns: version, model name, status, access scope, created by, updated time.
-- Create model dialog with version, name, path, description, access scope.
-- Access scope control:
-  - `private`: show a user permission management panel.
-  - `all_users`: show a simple indicator that all active users can use it.
-- Permission panel:
-  - Show user list.
-  - Each user has an allow/revoke control.
-  - Call the grant endpoint when enabled.
-  - Call the revoke endpoint when disabled.
-
-## Suggested Page Structure
-
-Admin frontend:
-
-```text
-Login
-User Management
-Model Management
-```
-
-Normal user frontend:
-
-```text
-Login
-Simulation page
-Model selector from GET /api/model-versions/accessible?username=<username>
-```
-
-## JavaScript Examples
-
-Login:
-
-```javascript
-async function login(baseUrl, username, password) {
-  const response = await fetch(`${baseUrl}/api/auth/login`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ username, password })
-  });
-
-  return response.json();
-}
-```
-
-Create model version:
-
-```javascript
-async function createModelVersion(baseUrl, model) {
-  const response = await fetch(`${baseUrl}/api/model-versions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(model)
-  });
-
-  return response.json();
-}
-```
-
-List accessible models:
-
-```javascript
-async function listAccessibleModels(baseUrl, username) {
-  const url = new URL(`${baseUrl}/api/model-versions/accessible`);
-  url.searchParams.set("username", username);
-
-  const response = await fetch(url);
-  return response.json();
-}
-```
-
-## Current Limitations
-
-- Model version APIs have not been migrated to JWT auth yet.
-- Some older model version API errors still use `success: false` in the JSON body instead of detailed HTTP status codes.
-- Model file upload is not implemented yet; `model_path` is stored as text.
 
 ## Simulation Tasks
 
-- `POST /api/simulations`
-- `GET /api/simulations`
-- `GET /api/simulations/{task_code}`
-- `GET /api/simulations/{task_code}/result`
-- `GET /api/simulations/{task_code}/report`
-- `POST /api/simulations/{task_code}/cancel`
+Simulation tasks can specify `model_version`. If omitted, the backend uses the default `python_mock` model.
+
+Before submitting a simulation, the frontend can call `GET /api/model-versions/accessible` to list models available to the current user, then pass the selected model's `version` as `model_version`.
+
+Available output parameters:
+
+```text
+time_s
+altitude_m
+speed_kmh
+pitch_deg
+roll_deg
+x_m
+y_m
+```
+
+Task statuses:
+
+| Status | Meaning |
+| --- | --- |
+| `queued` | Queued |
+| `running` | Running |
+| `reporting` | Generating report |
+| `succeeded` | Finished successfully |
+| `succeeded_with_warnings` | Some test points failed, but results were generated |
+| `failed` | Failed |
+| `cancelled` | Cancelled |
+
+Task object example:
+
+If `model_version` is omitted during submission, the task's `model_version` will be `null`.
+
+```json
+{
+  "task_code": "T000001",
+  "user_uid": "U000002",
+  "script_code": "F000001",
+  "subject": "Level Flight",
+  "model_version": "v1.0.0",
+  "model_name": "Flight Model A",
+  "report_template_code": "standard",
+  "output_parameters": ["time_s", "altitude_m", "speed_kmh"],
+  "status": "running",
+  "progress": 42,
+  "failed_points": 0,
+  "message": "Running TP001",
+  "error_message": null,
+  "submitted_at": "2026-08-05T10:00:00",
+  "started_at": "2026-08-05T10:00:01",
+  "finished_at": null,
+  "updated_at": "2026-08-05T10:00:05",
+  "artifacts": []
+}
+```
+
+### Endpoint List
+
+| Method | Path | Permission | Description |
+| --- | --- | --- | --- |
+| `POST` | `/api/simulations` | Logged-in user | Submit a simulation task |
+| `GET` | `/api/simulations` | Logged-in user | List current user's tasks |
+| `GET` | `/api/simulations/{task_code}` | Logged-in user | Get task status |
+| `GET` | `/api/simulations/{task_code}/result` | Logged-in user | Get simulation result JSON |
+| `GET` | `/api/simulations/{task_code}/report` | Logged-in user | Download HTML report |
+| `POST` | `/api/simulations/{task_code}/cancel` | Logged-in user | Request cancellation |
 
 ### POST `/api/simulations`
 
-Submit a simulation task. The current backend does not require `model_version_id`; it uses the default `python_mock` model.
-
-Request body:
+Request:
 
 ```json
 {
   "script_code": "F000001",
-  "output_parameters": ["altitude_m", "speed_kmh"]
+  "model_version": "v1.0.0",
+  "report_template_code": "standard",
+  "output_parameters": ["time_s", "altitude_m", "speed_kmh"],
+  "timeout_seconds": 3600
 }
 ```
 
-The script file must be FlightScript JSON 1.0:
+Field rules:
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `script_code` | Yes | Script code accessible to the current user |
+| `model_version` | No | Model version accessible to the current user; omitted means the default `python_mock` model |
+| `report_template_code` | No | Default `standard`; cannot be an empty string |
+| `output_parameters` | No | Output parameter array; missing or empty means all parameters |
+| `timeout_seconds` | No | 1-86400, default 3600 |
+
+Response:
 
 ```json
 {
-  "schema_version": "1.0",
-  "subject": {"code": "level-flight", "name": "Level Flight"},
-  "test_points": [
-    {
-      "id": "TP-001",
-      "initial_conditions": {
-        "altitude_m": 5000,
-        "speed_kmh": 450
-      },
-      "duration_s": 60
+  "success": true,
+  "message": "Simulation task queued",
+  "data": {
+    "task": {
+      "task_code": "T000001",
+      "user_uid": "U000002",
+      "script_code": "F000001",
+      "subject": "Level Flight",
+      "model_version": "v1.0.0",
+      "model_name": "Flight Model A",
+      "report_template_code": "standard",
+      "output_parameters": ["time_s", "altitude_m", "speed_kmh"],
+      "status": "queued",
+      "progress": 0,
+      "failed_points": 0,
+      "message": "Simulation task queued",
+      "error_message": null,
+      "submitted_at": "2026-08-05T10:00:00",
+      "started_at": null,
+      "finished_at": null,
+      "updated_at": "2026-08-05T10:00:00",
+      "artifacts": []
     }
-  ]
+  }
 }
+```
+
+Possible errors:
+
+```text
+Script does not exist
+Script file does not exist
+$: Flight script file must be valid JSON
+<path>: <script validation error>
+Default simulation model is not configured
+Model version does not exist or is not accessible
+Selected model file does not exist
+Selected model file type is not supported by simulation
 ```
 
 ### GET `/api/simulations`
 
-List the current user's simulation tasks.
+List the current user's simulation tasks. Response:
+
+```json
+{
+  "success": true,
+  "message": "Simulation tasks fetched successfully",
+  "data": {
+    "tasks": [
+      {
+        "task_code": "T000001",
+        "user_uid": "U000002",
+        "script_code": "F000001",
+        "subject": "Level Flight",
+        "model_version": "v1.0.0",
+        "model_name": "Flight Model A",
+        "report_template_code": "standard",
+        "output_parameters": ["time_s", "altitude_m", "speed_kmh"],
+        "status": "succeeded",
+        "progress": 100,
+        "failed_points": 0,
+        "message": "Simulation finished",
+        "error_message": null,
+        "submitted_at": "2026-08-05T10:00:00",
+        "started_at": "2026-08-05T10:00:01",
+        "finished_at": "2026-08-05T10:00:08",
+        "updated_at": "2026-08-05T10:00:08",
+        "artifacts": []
+      }
+    ]
+  }
+}
+```
 
 ### GET `/api/simulations/{task_code}`
 
-Fetch a simulation task status.
+Get one task's status. After submitting a task, the frontend can poll this endpoint every 1-2 seconds until `status` becomes terminal:
+
+```text
+succeeded
+succeeded_with_warnings
+failed
+cancelled
+```
+
+The response `data.task` has the same shape as the task object.
 
 ### GET `/api/simulations/{task_code}/result`
 
-Fetch simulation result summary and time-series data.
+If the result has not been generated yet, the endpoint returns an empty result:
+
+```json
+{
+  "success": true,
+  "message": "Simulation result fetched successfully",
+  "data": {
+    "result": {
+      "task": {
+        "task_code": "T000001",
+        "status": "running",
+        "progress": 42
+      },
+      "points": [],
+      "series": [],
+      "errors": []
+    }
+  }
+}
+```
+
+After the task finishes, response:
+
+```json
+{
+  "success": true,
+  "message": "Simulation result fetched successfully",
+  "data": {
+    "result": {
+      "subject": "Level Flight",
+      "script_code": "F000001",
+      "model": {
+        "model_name": "Flight Model A",
+        "model_type": "native",
+        "model_version": "v1.0.0",
+        "interface_version": "1.0"
+      },
+      "points": [
+        {
+          "id": "TP001",
+          "status": "success",
+          "samples": 121,
+          "max_altitude_m": 1012.0,
+          "max_speed_kmh": 253.0
+        }
+      ],
+      "series": [
+        {
+          "point_id": "TP001",
+          "time_s": 0.0,
+          "altitude_m": 1000.0,
+          "speed_kmh": 250.0
+        }
+      ],
+      "errors": [],
+      "task": {
+        "task_code": "T000001",
+        "status": "succeeded",
+        "progress": 100
+      }
+    }
+  }
+}
+```
+
+Notes:
+
+- `points` is a per-test-point summary.
+- `series` is time-series data controlled by `output_parameters`.
+- `errors` contains failed test points.
 
 ### GET `/api/simulations/{task_code}/report`
 
-Download the generated HTML report.
+Downloads the HTML report file. This endpoint returns a file stream, not JSON.
+
+If the report does not exist:
+
+```json
+{
+  "success": false,
+  "message": "Simulation report does not exist",
+  "data": null
+}
+```
 
 ### POST `/api/simulations/{task_code}/cancel`
 
-Request cancellation for an unfinished simulation task. Cancellation is cooperative and takes effect between test points.
+Request cancellation for an unfinished task.
+
+Response:
+
+```json
+{
+  "success": true,
+  "message": "Simulation cancellation requested",
+  "data": null
+}
+```
+
+If the task has already finished or cannot be cancelled, the backend returns `409`:
+
+```json
+{
+  "success": false,
+  "message": "Simulation task cannot be cancelled",
+  "data": null
+}
+```
+
+Note: cancellation takes effect between test points. It cannot forcibly interrupt a running native library function.

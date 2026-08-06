@@ -31,12 +31,19 @@ class Config:
         if ext.strip()
     }
     SCRIPT_MAX_UPLOAD_BYTES = int(os.getenv("SCRIPT_MAX_UPLOAD_BYTES", 5 * 1024 * 1024))
+    MODEL_ALLOWED_EXTENSIONS = {
+        ext.strip().lower()
+        for ext in os.getenv("MODEL_ALLOWED_EXTENSIONS", ".so,.dll,.dylib,.pkl,.pt,.onnx").split(",")
+        if ext.strip()
+    }
+    MODEL_MAX_UPLOAD_BYTES = int(os.getenv("MODEL_MAX_UPLOAD_BYTES", 200 * 1024 * 1024))
     SIMULATION_WORKER_COUNT = int(os.getenv("SIMULATION_WORKER_COUNT", 3))
     SIMULATION_DEFAULT_MODEL_TYPE = os.getenv("SIMULATION_DEFAULT_MODEL_TYPE", "python_mock")
     SIMULATION_DEFAULT_MODEL_PATH = os.getenv("SIMULATION_DEFAULT_MODEL_PATH", "")
+    DEFAULT_MODEL_ROOTS = f"{PROJECT_ROOT / 'models'},{DATA_ROOT / 'models'}"
     SIMULATION_ALLOWED_MODEL_ROOTS = tuple(
         Path(path.strip()).resolve()
-        for path in os.getenv("SIMULATION_ALLOWED_MODEL_ROOTS", str(PROJECT_ROOT / "models")).split(",")
+        for path in os.getenv("SIMULATION_ALLOWED_MODEL_ROOTS", DEFAULT_MODEL_ROOTS).split(",")
         if path.strip()
     )
     CORS_ORIGINS = [

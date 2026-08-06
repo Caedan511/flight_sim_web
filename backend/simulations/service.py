@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from backend.core.config import Config
+from backend.models.service import get_model_version_for_simulation
 from backend.scripts.service import get_accessible_script, get_script_file_path
 from backend.simulations.adapters import create_adapter
 from backend.simulations.contracts import (
@@ -73,11 +74,50 @@ def _default_model():
         return ModelSpec(
             model_name="Default Native Model",
             model_type="native",
+            model_version=None,
             model_path=str(model_path),
             interface_version="1.0",
         )
 
     raise SimulationServiceError(f"Unsupported default simulation model type: {model_type}")
+
+
+def _ensure_allowed_model_path(model_path):
+    path = Path(model_path).resolve()
+    if not path.is_file():
+        raise SimulationServiceError("Selected model file does not exist")
+
+    if Config.SIMULATION_ALLOWED_MODEL_ROOTS:
+        for root in Config.SIMULATION_ALLOWED_MODEL_ROOTS:
+            try:
+                path.relative_to(root)
+                return path
+            except ValueError:
+                continue
+        raise SimulationServiceError("Selected model file is outside allowed model roots")
+
+    return path
+
+
+def _selected_model(model_version, current_user):
+    if not model_version:
+        return _default_model()
+
+    model = get_model_version_for_simulation(current_user, model_version)
+    if model is None:
+        raise SimulationServiceError("Model version does not exist or is not accessible")
+
+    model_path = _ensure_allowed_model_path(model["model_path"])
+    if model_path.suffix.lower() not in {".so", ".dll", ".dylib"}:
+        raise SimulationServiceError("Selected model file type is not supported by simulation")
+
+    return ModelSpec(
+        model_name=model["model_name"],
+        model_type="native",
+        model_version=model["version"],
+        model_path=str(model_path),
+        interface_version="1.0",
+    )
 
 
 class SimulationService:
@@ -98,13 +138,14 @@ class SimulationService:
     def submit(self, data, current_user):
         script_data = _load_script_data(data.script_code, current_user)
         flight_script = FlightScript.from_dict(script_data)
-        model = _default_model()
+        model = _selected_model(data.model_version, current_user)
 
         task = create_task(
             user_id=current_user["id"],
             user_uid=current_user["uid"],
             script_code=data.script_code,
             subject=flight_script.subject_name,
+            model_version=model.model_version,
             model_name=model.model_name,
             report_template_code=data.report_template_code,
             output_parameters=list(data.output_parameters),
@@ -117,6 +158,7 @@ class SimulationService:
             script_code=data.script_code,
             script_data=script_data,
             model=model,
+            model_version=model.model_version,
             output_directory=task.output_directory,
             report_template_code=data.report_template_code,
             output_parameters=tuple(data.output_parameters),
@@ -167,6 +209,8 @@ class SimulationService:
             }
 
         result = json.loads(summary_path.read_text(encoding="utf-8"))
+        if isinstance(result.get("model"), dict):
+            result["model"].pop("model_path", None)
         result["task"] = task.to_public_dict()
         return result
 
